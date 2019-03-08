@@ -4,9 +4,25 @@ namespace tizis\laraComments\UseCases;
 
 use tizis\laraComments\Contracts\ICommentable;
 use tizis\laraComments\Entity\Comment;
+use tizis\laraComments\Http\Requests\GetRequest;
 
 class CommentService
 {
+    /**
+     * @param int $take
+     * @param null $commentable_type
+     * @return mixed
+     */
+    public static function getNewestComments($take = 10, $commentable_type = null)
+    {
+        return Comment::take($take)
+            ->when($commentable_type !== null, function ($q) use ($commentable_type) {
+                return $q->where('commentable_type', $commentable_type);
+            })
+            ->with(['commentable'])
+            ->orderBy('id', 'desc')
+            ->get();
+    }
 
     /**
      * @param $message
@@ -22,6 +38,15 @@ class CommentService
     }
 
     /**
+     * @param $modelPath
+     * @return bool
+     */
+    public static function modelIsExists($modelPath): bool
+    {
+        return class_exists($modelPath);
+    }
+
+    /**
      * @param $model
      * @return bool
      */
@@ -31,10 +56,25 @@ class CommentService
     }
 
     /**
+     * @param GetRequest $request
+     * @return array
+     */
+    public static function orderByRequestAdapter(GetRequest $request): array
+    {
+        $order_direction = $request->order_direction === 'asc' || $request->order_direction === 'desc'
+            ? $request->order_direction : 'asc';
+
+        $order_by = $request->order_by === 'rating' ? $request->order_by : 'id';
+
+        return ['column' => $order_by, 'direction' => $order_direction];
+    }
+
+
+    /**
      * @param string $message
      * @return Comment
      */
-    public function updateComment(Comment $comment, string $message): Comment
+    public static function updateComment(Comment $comment, string $message): Comment
     {
         $comment->update([
             'comment' => $message
@@ -50,7 +90,7 @@ class CommentService
      * @param null $parent
      * @return Comment
      */
-    public function createComment($user, ICommentable $model, string $message, $parent = null): Comment
+    public static function createComment($user, ICommentable $model, string $message, $parent = null): Comment
     {
 
         $comment = new Comment();
@@ -72,7 +112,7 @@ class CommentService
      * @param Comment $comment
      * @throws \Exception
      */
-    public function deleteComment(Comment $comment): void
+    public static function deleteComment(Comment $comment): void
     {
         if (!$comment->children()->exists()) {
             $comment->delete();
@@ -85,7 +125,7 @@ class CommentService
      * @param Comment $comment
      * @return int
      */
-    public function ratingRecalculation(Comment $comment): int
+    public static function ratingRecalculation(Comment $comment): int
     {
         $rating = 0;
         foreach ($comment->votes as $vote) {

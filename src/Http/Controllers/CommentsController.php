@@ -26,14 +26,12 @@ class CommentsController extends Controller
 
     /**
      * CommentsController constructor.
-     * @param CommentService $commentService
      * @param VoteService $voteService
      */
-    public function __construct(CommentService $commentService, VoteService $voteService)
+    public function __construct(VoteService $voteService)
     {
         $this->middleware(['web', 'auth'], ['except' => ['get']]);
         $this->policyPrefix = config('comments.policy_prefix');
-        $this->commentService = $commentService;
         $this->voteService = $voteService;
     }
 
@@ -46,24 +44,29 @@ class CommentsController extends Controller
     public function store(SaveRequest $request)
     {
         $modelPath = $request->commentable_type;
-        $message = CommentService::htmlFilter($request->message);
 
-        if (!class_exists($modelPath)) {
+        if (!CommentService::modelIsExists($modelPath)) {
             throw new \DomainException('Model don\'t exists');
         }
 
-        $model = new $modelPath;
-
-        if (!CommentService::isCommentable($model)) {
+        if (!CommentService::isCommentable(new $modelPath)) {
             throw new \DomainException('Model is\'t commentable');
         }
 
-        $model = $model::findOrFail($request->commentable_id);
-        $comment = $this->commentService->createComment(Auth::user(), $model, $message);
+        $model = $modelPath::findOrFail($request->commentable_id);
 
-        $resource = new CommentResource($comment);
+        $comment = CommentService::createComment(
+            Auth::user(),
+            $model,
+            CommentService::htmlFilter($request->message)
+        );
 
-        return $request->ajax() ? ['success' => true, 'comment' => $resource] : redirect()->to(url()->previous() . '#comment-' . $comment->id);
+        return $request->ajax()
+            ? [
+                'success' => true,
+                'comment' => new CommentResource($comment)
+            ]
+            : redirect()->to(url()->previous() . '#comment-' . $comment->id);
     }
 
     /**
@@ -74,25 +77,30 @@ class CommentsController extends Controller
     {
         $modelPath = $request->commentable_type;
         $modelId = $request->commentable_id;
+        $orderBy = CommentService::orderByRequestAdapter($request);
 
-        if (!class_exists($modelPath)) {
+        if (!CommentService::modelIsExists($modelPath)) {
             throw new \DomainException('Model don\'t exists');
         }
 
-        $model = new $modelPath;
-
-        if (!CommentService::isCommentable($model)) {
+        if (!CommentService::isCommentable(new $modelPath)) {
             throw new \DomainException('Model is\'t commentable');
         }
 
-        $model = $modelPath::where(['id' => $modelId])->first();
+        $model = $modelPath::where('id', $modelId)->first();
 
-        $count = $model->comments()->count();
-        $comments = $model->comments()->parentless()->get();
+        $response = [
+            'success' => true,
+            'comments' => CommentResource::collection(
+                $model->comments()
+                    ->parentless()
+                    ->orderBy($orderBy['column'], $orderBy['direction'])
+                    ->get()
+            ),
+            'count' => $model->comments()->count()
+        ];
 
-        $resource = CommentResource::collection($comments);
-
-        return ['success' => true, 'comments' => $resource, 'count' => $count];
+        return $response;
     }
 
 
@@ -107,16 +115,14 @@ class CommentsController extends Controller
     {
         $this->authorize($this->policyPrefix . '.edit', $comment);
 
-        $message = CommentService::htmlFilter($request->message);
-
-        $this->commentService->updateComment($comment, $message);
-
-        $resource = new CommentResource($comment);
+        CommentService::updateComment(
+            $comment,
+            CommentService::htmlFilter($request->message)
+        );
 
         return $request->ajax()
-            ? ['success' => true, 'comment' => $resource]
+            ? ['success' => true, 'comment' => new CommentResource($comment)]
             : redirect()->to(url()->previous() . '#comment-' . $comment->id);
-
     }
 
     /**
@@ -131,7 +137,7 @@ class CommentsController extends Controller
         $this->authorize($this->policyPrefix . '.delete', $comment);
 
         try {
-            $this->commentService->deleteComment($comment);
+            CommentService::deleteComment($comment);
             $response = ['success' => true];
         } catch (\DomainException $e) {
             $response = ['success' => false, 'message' => $e->getMessage()];
@@ -152,12 +158,16 @@ class CommentsController extends Controller
     public function reply(ReplyRequest $request, Comment $comment)
     {
         $this->authorize($this->policyPrefix . '.reply', $comment);
-        $message = CommentService::htmlFilter($request->message);
 
-        $reply = $this->commentService->createComment(Auth::user(), $comment->commentable, $message, $comment);
-        $resource = new CommentResource($reply);
+        $reply = CommentService::createComment(
+            Auth::user(), $comment->commentable,
+            CommentService::htmlFilter($request->message),
+            $comment
+        );
 
-        return $request->ajax() ? ['success' => true, 'comment' => $resource] : redirect()->to(url()->previous() . '#comment-' . $reply->id);
+        return $request->ajax()
+            ? ['success' => true, 'comment' => new CommentResource($reply)]
+            : redirect()->to(url()->previous() . '#comment-' . $reply->id);
     }
 
 }
